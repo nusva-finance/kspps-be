@@ -1,0 +1,125 @@
+package routes
+
+import (
+	"nusvakspps/handlers"
+	"nusvakspps/middleware"
+	"github.com/gin-gonic/gin"
+)
+
+func RegisterRoutes(router *gin.Engine) {
+	// Health check
+	router.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "ok"})
+	})
+
+	// API v1
+	v1 := router.Group("/api/v1")
+	{
+		// Auth routes (public)
+		auth := v1.Group("/auth")
+		{
+			auth.POST("/login", handlers.Login)
+			auth.POST("/logout", handlers.Logout)
+			auth.POST("/refresh", handlers.RefreshToken)
+		}
+
+		// Protected routes
+		protected := v1.Group("")
+		protected.Use(middleware.AuthMiddleware())
+		{
+			// Dashboard
+			protected.GET("/dashboard", handlers.GetDashboard)
+
+			// Users
+			users := protected.Group("/users")
+			{
+				users.GET("", handlers.GetUsers)
+				users.GET("/:id", handlers.GetUserByID)
+				users.POST("", handlers.CreateUser)
+				users.PUT("/:id", handlers.UpdateUser)
+				users.DELETE("/:id", handlers.DeleteUser)
+			}
+
+			// Members
+			members := protected.Group("/members")
+			{
+				members.GET("", handlers.GetMembers)
+				members.GET("/:id", handlers.GetMemberByID)
+				members.POST("", handlers.CreateMember)
+				members.PUT("/:id", handlers.UpdateMember)
+				members.DELETE("/:id", handlers.DeleteMember)
+			}
+
+			// Savings
+			savings := protected.Group("/savings")
+			{
+				// Saving Types (dynamic configuration)
+				savingTypes := savings.Group("/types")
+				{
+					savingTypes.GET("", handlers.GetSavingTypes)
+					savingTypes.GET("/:id", handlers.GetSavingTypeByID)
+					savingTypes.POST("", handlers.CreateSavingType)
+					savingTypes.PUT("/:id", handlers.UpdateSavingType)
+					savingTypes.DELETE("/:id", handlers.DeleteSavingType)
+					savingTypes.POST("/initialize", handlers.InitializeSavingTypes)
+				}
+
+				// Saving Accounts
+				savings.GET("/accounts", handlers.GetAllSavingsAccounts)
+
+			// Saving Types with Total Balances
+				savingsTypesGroup := savings.Group("/types")
+				{
+					savingsTypesGroup.GET("/balances", handlers.GetAllSavingTypesWithBalances)
+				}
+
+			// Saving Transactions
+				savings.GET("/transactions", handlers.GetSavingsTransactions)
+				savings.GET("/transactions/:id", handlers.GetSavingsTransactionByID)
+				savings.POST("/transactions", handlers.CreateSavingsTransaction)
+				savings.PUT("/transactions/:id", handlers.UpdateSavingsTransaction)
+				savings.DELETE("/transactions/:id", handlers.DeleteSavingsTransaction)
+
+				// Member Balances
+				savings.GET("/member/:memberId/balance", handlers.GetMemberSavingsBalance)
+
+				// Legacy endpoints (for backward compatibility)
+				savings.GET("", handlers.GetSavingsTransactions)
+				savings.GET("/:id", handlers.GetSavingsTransactionByID)
+				savings.POST("", handlers.CreateSavingsTransaction)
+				savings.PUT("/:id", handlers.UpdateSavingsTransaction)
+				savings.DELETE("/:id", handlers.DeleteSavingsTransaction)
+			}
+
+			// Loans
+			loans := protected.Group("/loans")
+			{
+				loans.GET("/applications", handlers.GetLoanApplications)
+				loans.POST("/applications", handlers.CreateLoanApplication)
+				loans.PUT("/applications/:id/approve", handlers.ApproveLoan)
+				loans.GET("/applications/:id/schedule", handlers.GetLoanSchedule)
+				loans.POST("/transactions", handlers.CreateLoanTransaction)
+			}
+
+			// Security
+			security := protected.Group("/security")
+			{
+				security.GET("/roles", handlers.GetRoles)
+				security.POST("/roles", handlers.CreateRole)
+				security.GET("/menus", handlers.GetMenus)
+				security.GET("/permissions", handlers.GetPermissions)
+				security.POST("/roles/:role-id/permissions", handlers.AssignPermissions)
+				security.GET("/audit-logs", handlers.GetAuditLogs)
+			}
+
+			margin := protected.Group("/margin-setups")
+			{
+				margin.GET("", handlers.GetMargins)
+				margin.POST("", handlers.CreateMargin)
+				margin.PUT("/:id", handlers.UpdateMargin)
+				margin.DELETE("/:id", handlers.DeleteMargin)
+			}
+
+		}
+	}
+}
