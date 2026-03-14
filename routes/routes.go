@@ -91,15 +91,6 @@ func RegisterRoutes(router *gin.Engine) {
 				savings.DELETE("/:id", handlers.DeleteSavingsTransaction)
 			}
 
-			// Loans
-			loans := protected.Group("/loans")
-			{
-				loans.GET("/applications", handlers.GetLoanApplications)
-				loans.POST("/applications", handlers.CreateLoanApplication)
-				loans.PUT("/applications/:id/approve", handlers.ApproveLoan)
-				loans.GET("/applications/:id/schedule", handlers.GetLoanSchedule)
-				loans.POST("/transactions", handlers.CreateLoanTransaction)
-			}
 
 			// Security
 			security := protected.Group("/security")
@@ -115,9 +106,41 @@ func RegisterRoutes(router *gin.Engine) {
 			margin := protected.Group("/margin-setups")
 			{
 				margin.GET("", handlers.GetMargins)
+				margin.GET("/:id", handlers.GetMarginByID)
 				margin.POST("", handlers.CreateMargin)
 				margin.PUT("/:id", handlers.UpdateMargin)
 				margin.DELETE("/:id", handlers.DeleteMargin)
+			}
+
+			// Kategori Barang
+			kategoriBarang := protected.Group("/kategori-barangs")
+			{
+				kategoriBarang.GET("", handlers.GetKategoriBarangs)
+				kategoriBarang.GET("/:id", handlers.GetKategoriBarangByID)
+				kategoriBarang.POST("", handlers.CreateKategoriBarang)
+				kategoriBarang.PUT("/:id", handlers.UpdateKategoriBarang)
+				kategoriBarang.DELETE("/:id", handlers.DeleteKategoriBarang)
+			}
+
+			// Rekening
+			rekening := protected.Group("/rekening")
+			{
+				rekening.GET("", handlers.GetRekenings)
+				rekening.GET("/:id", handlers.GetRekeningByID)
+				rekening.POST("", handlers.CreateRekening)
+				rekening.PUT("/:id", handlers.UpdateRekening)
+				rekening.DELETE("/:id", handlers.DeleteRekening)
+			}
+
+			// Pembiayaan
+			pembiayaan := protected.Group("/pembiayaan")
+			{
+				pembiayaan.GET("", handlers.GetPembiayaan)
+				pembiayaan.GET("/margin", handlers.GetMarginByCategoryAndTenor)
+				pembiayaan.GET("/:id", handlers.GetPembiayaanByID)
+				pembiayaan.POST("", handlers.CreatePembiayaan)
+				pembiayaan.PUT("/:id", handlers.UpdatePembiayaan)
+				pembiayaan.DELETE("/:id", handlers.DeletePembiayaan)
 			}
 
 		}

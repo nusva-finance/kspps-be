@@ -83,11 +83,130 @@ func addDeletedAtColumn(db *gorm.DB) error {
 	return nil
 }
 
+// createKategoriBarangsTable creates kategori_barang table
+func createKategoriBarangsTable(db *gorm.DB) error {
+	// Check if table exists
+	var tableExists bool
+	err := db.Raw("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'kategori_barang')").Scan(&tableExists).Error
+	if err != nil {
+		return err
+	}
+
+	if tableExists {
+		return nil // Table already exists
+	}
+
+	// Create table (tanpa 's' di nama tabel)
+	err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS kategori_barang (
+			id SERIAL PRIMARY KEY,
+			kategori VARCHAR(100) UNIQUE NOT NULL,
+			aktif BOOLEAN DEFAULT true,
+			created_by VARCHAR(100),
+			updated_by VARCHAR(100),
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			deleted_at TIMESTAMP
+		)
+	`).Error
+
+	if err != nil {
+		return err
+	}
+
+	// Create indexes
+	err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_kategori_barang_kategori ON kategori_barang(kategori)`).Error
+	if err != nil {
+		log.Printf("Warning: Failed to create index: %v", err)
+	}
+
+	return nil
+}
+
+// createMarginSetupsTable creates margin_setups table
+func createMarginSetupsTable(db *gorm.DB) error {
+	// Check if table exists
+	var tableExists bool
+	err := db.Raw("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'margin_setups')").Scan(&tableExists).Error
+	if err != nil {
+		return err
+	}
+
+	if tableExists {
+		return nil // Table already exists
+	}
+
+	// Create table
+	err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS margin_setups (
+			category VARCHAR(50) NOT NULL,
+			tenor INTEGER NOT NULL,
+			margin DECIMAL(5,4) NOT NULL,
+			deleted_at TIMESTAMP,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)
+	`).Error
+
+	if err != nil {
+		return err
+	}
+
+	// Create indexes
+	err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_margin_setups_category ON margin_setups(category)`).Error
+	if err != nil {
+		log.Printf("Warning: Failed to create index: %v", err)
+	}
+
+	err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_margin_setups_tenor ON margin_setups(tenor)`).Error
+	if err != nil {
+		log.Printf("Warning: Failed to create index: %v", err)
+	}
+
+	err = db.Exec(`
+		CREATE UNIQUE CONSTRAINT unique_category_tenor UNIQUE (category, tenor)
+	`).Error
+
+	if err != nil {
+		log.Printf("Warning: Failed to create unique constraint: %v", err)
+	}
+
+	// Insert sample data
+	err = db.Exec(`
+		INSERT INTO margin_setups (category, tenor, margin) VALUES
+		('Elektronik', 3, 0.05),
+		('Elektronik', 6, 0.07),
+		('Elektronik', 12, 0.10),
+		('Pakaian', 3, 0.04),
+		('Pakaian', 6, 0.06),
+		('Kendaraan', 12, 0.12),
+		('Kendaraan', 24, 0.15),
+		('Kendaraan', 36, 0.18)
+		ON CONFLICT (category, tenor) DO NOTHING
+	`).Error
+
+	if err != nil {
+		log.Printf("Warning: Failed to insert sample data: %v", err)
+	}
+
+	return nil
+}
+
 // runMigrations handles all database migrations in a controlled way
 func runMigrations(db *gorm.DB) error {
 	// Migration 1: Add deleted_at column to users table
 	if err := runMigrationOnce(db, 2024030301, addDeletedAtColumn); err != nil {
 		return fmt.Errorf("migration %d failed: %w", 2024030301, err)
+	}
+
+	// Migration 2: Create kategori_barangs table
+	if err := runMigrationOnce(db, 2024031501, createKategoriBarangsTable); err != nil {
+		return fmt.Errorf("migration %d failed: %w", 2024031501, err)
+	}
+
+	// Migration 3: Create margin_setups table
+	if err := runMigrationOnce(db, 2024031502, createMarginSetupsTable); err != nil {
+		return fmt.Errorf("migration %d failed: %w", 2024031502, err)
 	}
 
 	return nil
@@ -122,7 +241,7 @@ func runMigrationOnce(db *gorm.DB, version int64, migrationFunc func(*gorm.DB) e
 		return nil
 	}
 
-	// Run the migration
+	// Run migration
 	log.Printf("Running migration %d...", version)
 	err = migrationFunc(db)
 	if err != nil {
