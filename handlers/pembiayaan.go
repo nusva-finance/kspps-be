@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
+	"strconv"
 	"github.com/gin-gonic/gin"
 
 	"nusvakspps/models"
@@ -31,21 +31,22 @@ func HitungJatuhTempo(tglPinjaman time.Time) time.Time {
 }
 
 type CreatePembiayaanRequest struct {
-	IDMember        int     `json:"idmember" binding:"required"`
+	IDMember         int     `json:"idmember" binding:"required"`
 	TipePinjaman    string  `json:"tipepinjaman" binding:"required"`
 	TanggalPinjaman string  `json:"tanggalpinjaman" binding:"required"`
 	KategoriBarang  string  `json:"kategoribarang" binding:"required"`
 	Tenor           int     `json:"tenor" binding:"required"`
-	NominalPinjaman float64 `json:"nominalpinjaman" binding:"required,gt=0"`
+	NominalPembelian float64 `json:"nominalpembelian" binding:"required,gt=0"`
+	IDNusvaRekening  uint    `json:"idnusvarekening" binding:"required"`
 }
 
 type UpdatePembiayaanRequest struct {
-	IDMember        int     `json:"idmember"`
+	IDMember         int     `json:"idmember"`
 	TipePinjaman    string  `json:"tipepinjaman"`
 	TanggalPinjaman string  `json:"tanggalpinjaman"`
 	KategoriBarang  string  `json:"kategoribarang"`
 	Tenor           int     `json:"tenor"`
-	NominalPinjaman float64 `json:"nominalpinjaman"`
+	NominalPembelian float64 `json:"nominalpembelian"`
 }
 
 // GetPembiayaan - Mengambil daftar pembiayaan
@@ -99,7 +100,35 @@ func GetPembiayaanByID(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": pembiayaan})
+	// Get idnusvarekening from rekening_transaction (original Insert record)
+	rekeningTransactionRepo := repositories.NewRekeningTransactionRepository()
+	idNusvaRekening, err := rekeningTransactionRepo.GetIDNusvaRekeningByPembiayaanID(uint(pembiayaan.IDPinjaman))
+	if err != nil {
+		fmt.Println("⚠️ Could not get idnusvarekening:", err)
+		idNusvaRekening = 0
+	}
+	fmt.Println("✅ ID Nusva Rekening from transaction:", idNusvaRekening)
+
+	// Return pembiayaan with idnusvarekening
+	response := map[string]interface{}{
+		"idpinjaman":        pembiayaan.IDPinjaman,
+		"idmember":          pembiayaan.IDMember,
+		"tipepinjaman":      pembiayaan.TipePinjaman,
+		"tanggalpinjaman":   pembiayaan.TanggalPinjaman,
+		"kategoribarang":    pembiayaan.KategoriBarang,
+		"tenor":             pembiayaan.Tenor,
+		"margin":            pembiayaan.Margin,
+		"nominalpinjaman":   pembiayaan.NominalPinjaman,
+		"nominalpembelian":  pembiayaan.NominalPembelian,
+		"tgljtangsuran1":    pembiayaan.TglJtAngsuran1,
+		"idnusvarekening":   idNusvaRekening,
+		"created_by":        pembiayaan.CreatedBy,
+		"updated_by":        pembiayaan.UpdatedBy,
+		"created_at":        pembiayaan.CreatedAt,
+		"updated_at":        pembiayaan.UpdatedAt,
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": response})
 }
 
 // CreatePembiayaan - Membuat pembiayaan baru
@@ -123,7 +152,8 @@ func CreatePembiayaan(c *gin.Context) {
 	fmt.Println("   Tanggal Pinjaman:", req.TanggalPinjaman)
 	fmt.Println("   Kategori Barang:", req.KategoriBarang)
 	fmt.Println("   Tenor:", req.Tenor)
-	fmt.Println("   Nominal Pinjaman:", req.NominalPinjaman)
+	fmt.Println("   Nominal Pembelian:", req.NominalPembelian)
+	fmt.Println("   ID Nusva Rekening:", req.IDNusvaRekening)
 	fmt.Println("   Operator:", operatorName)
 
 	// Parse tanggal pinjaman
@@ -151,11 +181,11 @@ func CreatePembiayaan(c *gin.Context) {
 
 	margin := marginSetup.Margin
 
-	// Kalkulasi nominal pembelian (dengan pembulatan ke 10.000)
-	// Margin adalah persentase, jadi perlu dibagi 100 dulu
+	// Kalkulasi nominal pinjaman (Nominal Pembiayaan) dari nominal pembelian
+	// Nominal Pembiayaan = Nominal Pembelian + (Nominal Pembelian * Margin / 100)
 	marginValue := margin / 100
-	totalPembelian := req.NominalPinjaman + (req.NominalPinjaman * marginValue)
-	nominalPembelian := RoundUp(totalPembelian, 10000)
+	nominalPinjaman := req.NominalPembelian + (req.NominalPembelian * marginValue)
+	nominalPinjamanDibulatkan := RoundUp(nominalPinjaman, 10000)
 
 	// Kalkulasi tanggal jatuh tempo (jika tanggal 1-15: +1 bulan, jika 16-31: +2 bulan)
 	tglJtAngsuran1 := HitungJatuhTempo(tanggalPinjaman)
@@ -163,8 +193,9 @@ func CreatePembiayaan(c *gin.Context) {
 	fmt.Println("📊 Calculation:")
 	fmt.Println("   Margin:", margin, "(", (margin * 100), "% )")
 	fmt.Println("   Margin Value (dibagi 100):", marginValue)
-	fmt.Println("   Total Pembelian (sebelum pembulatan):", totalPembelian)
-	fmt.Println("   Nominal Pembelian (dibulatkan ke 10.000):", nominalPembelian)
+	fmt.Println("   Nominal Pembelian (input):", req.NominalPembelian)
+	fmt.Println("   Nominal Pembiayaan (sebelum pembulatan):", nominalPinjaman)
+	fmt.Println("   Nominal Pembiayaan (dibulatkan ke 10.000):", nominalPinjamanDibulatkan)
 	fmt.Println("   Tgl Pinjaman:", tanggalPinjaman.Format("2006-01-02"))
 	fmt.Println("   Tgl Jatuh Tempo:", tglJtAngsuran1.Format("2006-01-02"))
 
@@ -175,8 +206,8 @@ func CreatePembiayaan(c *gin.Context) {
 		KategoriBarang:   req.KategoriBarang,
 		Tenor:           req.Tenor,
 		Margin:          margin,
-		NominalPinjaman:  req.NominalPinjaman,
-		NominalPembelian: nominalPembelian,
+		NominalPinjaman:  nominalPinjamanDibulatkan,
+		NominalPembelian: req.NominalPembelian,
 		TglJtAngsuran1:  tglJtAngsuran1,
 		CreatedBy:        operatorName,
 		UpdatedBy:        operatorName,
@@ -206,6 +237,44 @@ func CreatePembiayaan(c *gin.Context) {
 	fmt.Println("   ID Pinjaman:", pembiayaan.IDPinjaman)
 	fmt.Println("   ID Member:", pembiayaan.IDMember)
 	fmt.Println("   Nominal Pembelian:", pembiayaan.NominalPembelian)
+
+	// Create rekening_transaction record with nominal * -1
+	fmt.Println("📝 About to create rekening_transaction...")
+	fmt.Println("   ID Nusva Rekening:", req.IDNusvaRekening)
+	fmt.Println("   Table Transaction: pembiayaan")
+	fmt.Println("   ID Table Transaction:", pembiayaan.IDPinjaman)
+	fmt.Println("   Nominal Transaksi:", -1 * req.NominalPembelian)
+	fmt.Println("   Tanggal Transaksi:", time.Now())
+
+	rekeningTransactionRepo := repositories.NewRekeningTransactionRepository()
+	rekeningTransaction := &models.RekeningTransaction{
+		TransactionType:    "Insert",
+		IDNusvaRekening:    req.IDNusvaRekening,
+		TableTransaction:   "pembiayaan",
+		IDTableTransaction: uint(pembiayaan.IDPinjaman),
+		TanggalTransaksi:   time.Now(),
+		NominalTransaksi:   -1 * req.NominalPembelian,
+		CreatedBy:          operatorName,
+		UpdatedBy:          operatorName,
+	}
+
+	fmt.Println("📝 RekeningTransaction object to create:", rekeningTransaction)
+
+	if err := rekeningTransactionRepo.Create(rekeningTransaction); err != nil {
+		fmt.Println("❌ Error creating rekening_transaction:")
+		fmt.Println("   Error:", err.Error())
+		fmt.Println("   Error Type:", fmt.Sprintf("%T", err))
+		// Continue anyway, the pembiayaan was created successfully
+	} else {
+		fmt.Println("✅ Rekening Transaction created successfully:")
+		fmt.Println("   ID Rekening Transaction:", rekeningTransaction.IDRekeningTransaction)
+		fmt.Println("   Transaction Type:", rekeningTransaction.TransactionType)
+		fmt.Println("   Table Transaction:", rekeningTransaction.TableTransaction)
+		fmt.Println("   ID Table Transaction:", rekeningTransaction.IDTableTransaction)
+		fmt.Println("   ID Nusva Rekening:", rekeningTransaction.IDNusvaRekening)
+		fmt.Println("   Nominal Transaksi:", rekeningTransaction.NominalTransaksi)
+		fmt.Println("   Tanggal Transaksi:", rekeningTransaction.TanggalTransaksi)
+	}
 
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "Pembiayaan berhasil ditambahkan",
@@ -237,6 +306,26 @@ func UpdatePembiayaan(c *gin.Context) {
 		return
 	}
 
+	// Store old nominal pembelian for rekening_transaction
+	oldNominalPembelian := pembiayaan.NominalPembelian
+
+	// Get old idnusvarekening from rekening_transaction (original Insert record)
+	rekeningTransactionRepo := repositories.NewRekeningTransactionRepository()
+	oldIDNusvaRekening, err := rekeningTransactionRepo.GetIDNusvaRekeningByPembiayaanID(uint(pembiayaan.IDPinjaman))
+	if err != nil {
+		fmt.Println("⚠️ Could not get old idnusvarekening:", err)
+		oldIDNusvaRekening = 0
+	}
+
+	// Get new idnusvarekening from input (required for Update)
+	var newIDNusvaRekening uint
+	if val, ok := input["idnusvarekening"].(float64); ok {
+		newIDNusvaRekening = uint(val)
+	} else {
+		// If not provided, use the old one
+		newIDNusvaRekening = oldIDNusvaRekening
+	}
+
 	// Update fields from input
 	if val, ok := input["idmember"].(float64); ok {
 		pembiayaan.IDMember = int(val)
@@ -256,11 +345,15 @@ func UpdatePembiayaan(c *gin.Context) {
 	if val, ok := input["tenor"].(float64); ok {
 		pembiayaan.Tenor = int(val)
 	}
-	if val, ok := input["nominalpinjaman"].(float64); ok {
-		pembiayaan.NominalPinjaman = val
+	if val, ok := input["nominalpembelian"].(float64); ok {
+		pembiayaan.NominalPembelian = val
 	}
 
-	// Recalculate margin, nominal pembelian, and tgl jatuh tempo if category or tenor changed
+	// Recalculate margin, nominal pinjaman, and tgl jatuh tempo if category, tenor, or nominal pembelian changed
+	nominalPembelianChanged := false
+	if _, ok := input["nominalpembelian"]; ok {
+		nominalPembelianChanged = true
+	}
 	categoryChanged := false
 	if _, ok := input["kategoribarang"]; ok {
 		categoryChanged = true
@@ -270,7 +363,8 @@ func UpdatePembiayaan(c *gin.Context) {
 		tenorChanged = true
 	}
 
-	if categoryChanged || tenorChanged {
+	if nominalPembelianChanged || categoryChanged || tenorChanged {
+		// Get margin from category and tenor
 		marginRepo := repositories.NewMarginRepository()
 		marginSetup, err := marginRepo.FindByCategoryAndTenor(pembiayaan.KategoriBarang, pembiayaan.Tenor)
 		if err != nil {
@@ -285,11 +379,10 @@ func UpdatePembiayaan(c *gin.Context) {
 		}
 
 		pembiayaan.Margin = marginSetup.Margin
-		// Kalkulasi nominal pembelian dengan pembulatan ke 10.000
-		// Margin adalah persentase, jadi perlu dibagi 100 dulu
+		// Kalkulasi nominal pinjaman dari nominal pembelian dengan pembulatan ke 10.000
 		marginValue := pembiayaan.Margin / 100
-		totalPembelian := pembiayaan.NominalPinjaman + (pembiayaan.NominalPinjaman * marginValue)
-		pembiayaan.NominalPembelian = RoundUp(totalPembelian, 10000)
+		nominalPinjaman := pembiayaan.NominalPembelian + (pembiayaan.NominalPembelian * marginValue)
+		pembiayaan.NominalPinjaman = RoundUp(nominalPinjaman, 10000)
 		// Kalkulasi tanggal jatuh tempo
 		pembiayaan.TglJtAngsuran1 = HitungJatuhTempo(pembiayaan.TanggalPinjaman)
 	}
@@ -306,19 +399,62 @@ func UpdatePembiayaan(c *gin.Context) {
 	fmt.Println("✅ Pembiayaan updated successfully:")
 	fmt.Println("   ID Pinjaman:", pembiayaan.IDPinjaman)
 
+	// Create 2 rekening_transaction records: Reverse and Update
+	// Record 1: Reverse (membalik transaksi lama) - positive to reverse negative
+	fmt.Println("📝 Creating Reverse rekening_transaction...")
+	reverseTransaction := &models.RekeningTransaction{
+		TransactionType:    "Reverse",
+		IDNusvaRekening:    oldIDNusvaRekening,
+		TableTransaction:   "pembiayaan",
+		IDTableTransaction: uint(pembiayaan.IDPinjaman),
+		TanggalTransaksi:   time.Now(),
+		NominalTransaksi:   oldNominalPembelian, // Positive to reverse the negative from Insert
+		CreatedBy:          operatorName,
+		UpdatedBy:          operatorName,
+	}
+	if err := rekeningTransactionRepo.Create(reverseTransaction); err != nil {
+		fmt.Println("❌ Error creating reverse transaction:", err)
+	} else {
+		fmt.Println("✅ Reverse transaction created successfully")
+	}
+
+	// Record 2: Update (mencatat transaksi baru) - negative for new value
+	fmt.Println("📝 Creating Update rekening_transaction...")
+	updateTransaction := &models.RekeningTransaction{
+		TransactionType:    "Update",
+		IDNusvaRekening:    newIDNusvaRekening,
+		TableTransaction:   "pembiayaan",
+		IDTableTransaction: uint(pembiayaan.IDPinjaman),
+		TanggalTransaksi:   time.Now(),
+		NominalTransaksi:   -1 * pembiayaan.NominalPembelian, // Negative for new value
+		CreatedBy:          operatorName,
+		UpdatedBy:          operatorName,
+	}
+	if err := rekeningTransactionRepo.Create(updateTransaction); err != nil {
+		fmt.Println("❌ Error creating update transaction:", err)
+	} else {
+		fmt.Println("✅ Update transaction created successfully")
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Data berhasil diperbarui",
 		"data":    pembiayaan,
 	})
 }
 
-// DeletePembiayaan - Menghapus pembiayaan
-func DeletePembiayaan(c *gin.Context) {
-	idParam := c.Param("id")
-	fmt.Println("🗑️ Deleting pembiayaan ID:", idParam)
+// handlers/pembiayaan.go
 
-	var id int
-	if _, err := fmt.Sscanf(idParam, "%d", &id); err != nil {
+func DeletePembiayaan(c *gin.Context) {
+	operatorName := c.GetString("current_user_name")
+	if operatorName == "" {
+		operatorName = "system"
+	}
+
+	idParam := c.Param("id")
+	fmt.Println("🗑️ Memproses penghapusan pembiayaan ID:", idParam)
+
+	id, err := strconv.Atoi(idParam)
+	if err != nil {
 		fmt.Println("❌ ID tidak valid:", idParam)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ID pembiayaan tidak valid"})
 		return
@@ -326,56 +462,54 @@ func DeletePembiayaan(c *gin.Context) {
 
 	repo := repositories.NewPembiayaanRepository()
 
-	// Cek apakah pembiayaan ini punya angsuran terkait
-	// Cek tabel pembayaran (jika ada) untuk referensi
+	// Ambil data untuk memastikan record ada sebelum dihapus
 	pembiayaan, err := repo.FindByID(id)
 	if err != nil {
-		if err.Error() == "record not found" {
-			fmt.Println("⚠️ Pembiayaan tidak ditemukan:", id)
-			c.JSON(http.StatusNotFound, gin.H{"error": "Data pembiayaan tidak ditemukan"})
-		} else {
-			fmt.Println("❌ Error saat mencari pembiayaan:", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data pembiayaan"})
-		}
+		fmt.Println("⚠️ Data pembiayaan tidak ditemukan untuk ID:", id)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Data tidak ditemukan"})
 		return
 	}
 
-	fmt.Println("📊 Checking related records before delete...")
-	fmt.Println("   ID Pinjaman:", pembiayaan.IDPinjaman)
-	fmt.Println("   ID Member:", pembiayaan.IDMember)
+	// GUNAKAN VARIABEL: Kita cetak info pembiayaan ke terminal agar variabel 'pembiayaan' terpakai
+	fmt.Printf("✅ Menghapus data: [%s] untuk Member ID: %d dengan Nominal: %.2f\n",
+		pembiayaan.TipePinjaman, pembiayaan.IDMember, pembiayaan.NominalPinjaman)
 
-	// Periksa apakah ada referensi dari tabel lain
-	// Catatan: Asumsikan tabel lain menggunakan nama yang sama
-	// Di Go kita bisa cek constraint error dari database
+	// Get idnusvarekening from rekening_transaction (original Insert record)
+	rekeningTransactionRepo := repositories.NewRekeningTransactionRepository()
+	idNusvaRekening, err := rekeningTransactionRepo.GetIDNusvaRekeningByPembiayaanID(uint(pembiayaan.IDPinjaman))
+	if err != nil {
+		fmt.Println("⚠️ Could not get idnusvarekening:", err)
+		idNusvaRekening = 0
+	}
 
+	// Eksekusi penghapusan di database
 	if err := repo.Delete(id); err != nil {
-		fmt.Println("❌ Error deleting pembiayaan:", err)
-		// Cek apakah error adalah constraint violation
-		errMsg := err.Error()
-		if strings.Contains(strings.ToLower(errMsg), "duplicate") ||
-		   strings.Contains(strings.ToLower(errMsg), "unique") ||
-		   strings.Contains(strings.ToLower(errMsg), "constraint") ||
-		   strings.Contains(strings.ToLower(errMsg), "foreign key") ||
-		   strings.Contains(strings.ToLower(errMsg), "violates") {
-			fmt.Println("⚠️ Constraint violation detected - member/pembayaran terkait")
-			c.JSON(http.StatusConflict, gin.H{
-				"error": "Tidak dapat menghapus data ini. Data ini memiliki referensi ke tabel lain (anggota, pembayaran, dll).",
-			})
-			return
-		}
-
-		fmt.Println("   Error type:", fmt.Sprintf("%T", err))
-		fmt.Println("   Error message:", errMsg)
-
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus data pembiayaan: " + errMsg})
+		fmt.Println("❌ Gagal menghapus dari database:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus data: " + err.Error()})
 		return
 	}
 
-	fmt.Println("✅ Pembiayaan deleted successfully, ID:", id)
-	fmt.Println("   ID Pinjaman:", pembiayaan.IDPinjaman)
+	// Create rekening_transaction record for Delete
+	fmt.Println("📝 Creating Delete rekening_transaction...")
+	deleteTransaction := &models.RekeningTransaction{
+		TransactionType:    "Delete",
+		IDNusvaRekening:    idNusvaRekening,
+		TableTransaction:   "pembiayaan",
+		IDTableTransaction: uint(pembiayaan.IDPinjaman),
+		TanggalTransaksi:   time.Now(),
+		NominalTransaksi:   pembiayaan.NominalPembelian, // Positive to reverse the negative from Insert
+		CreatedBy:          operatorName,
+		UpdatedBy:          operatorName,
+	}
+	if err := rekeningTransactionRepo.Create(deleteTransaction); err != nil {
+		fmt.Println("❌ Error creating delete transaction:", err)
+	} else {
+		fmt.Println("✅ Delete transaction created successfully")
+	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Pembiayaan berhasil dihapus"})
 }
+
 
 // GetMarginByCategoryAndTenor - Helper endpoint untuk mendapatkan margin berdasarkan kategori dan tenor
 func GetMarginByCategoryAndTenor(c *gin.Context) {

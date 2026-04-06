@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -207,4 +208,69 @@ func DeleteRekening(c *gin.Context) {
 	fmt.Println("✅ Rekening deleted successfully, ID:", id)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Rekening berhasil dihapus"})
+}
+
+// GetMutasiRekening - Mengambil mutasi rekening dengan date range filter
+func GetMutasiRekening(c *gin.Context) {
+	idParam := c.Param("id")
+	fmt.Println("📊 Getting mutasi rekening for ID:", idParam)
+
+	var id uint
+	if _, err := fmt.Sscanf(idParam, "%d", &id); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID tidak valid"})
+		return
+	}
+
+	// Get date range from query params
+	dateFromStr := c.DefaultQuery("date_from", time.Now().AddDate(0, -1, 0).Format("2006-01-02"))
+	dateToStr := c.DefaultQuery("date_to", time.Now().Format("2006-01-02"))
+
+	dateFrom, err := time.Parse("2006-01-02", dateFromStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Format tanggal dari tidak valid"})
+		return
+	}
+
+	dateTo, err := time.Parse("2006-01-02", dateToStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Format tanggal sampai tidak valid"})
+		return
+	}
+
+	// Set dateTo to end of day
+	dateTo = dateTo.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+
+	// Verify rekening exists
+	rekeningRepo := repositories.NewNusvaRekeningRepository()
+	_, err = rekeningRepo.FindByID(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Rekening tidak ditemukan"})
+		return
+	}
+
+	// Get opening balance
+	transactionRepo := repositories.NewRekeningTransactionRepository()
+	openingBalance, err := transactionRepo.GetOpeningBalance(id, dateFrom)
+	if err != nil {
+		fmt.Println("❌ Error getting opening balance:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil saldo awal"})
+		return
+	}
+
+	// Get transactions
+	transactions, err := transactionRepo.GetMutasiByRekeningID(id, dateFrom, dateTo)
+	if err != nil {
+		fmt.Println("❌ Error getting transactions:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data mutasi"})
+		return
+	}
+
+	fmt.Printf("✅ Retrieved %d transactions, opening balance: %.2f\n", len(transactions), openingBalance)
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": gin.H{
+			"opening_balance": openingBalance,
+			"transactions":    transactions,
+		},
+	})
 }

@@ -20,6 +20,7 @@ type CreateSavingsTransactionRequest struct {
 	Amount          int    `json:"amount" binding:"required"`           // integer amount (in rupiah)
 	Description     string `json:"description" binding:"required"`
 	TransactionDate string `json:"transaction_date" binding:"required"` // YYYY-MM-DD format
+	RekeningID      uint   `json:"rekening_id"`                         // ID dari nusva_rekening (opsional)
 }
 
 // GetSavingsTransactions retrieves all savings transactions with pagination, search, and filters
@@ -118,14 +119,14 @@ func GetSavingsTransactionByID(c *gin.Context) {
 	fmt.Println("👤 Getting savings transaction by ID:", id)
 
 	savingsRepo := repositories.NewSavingsRepository()
-	transaction, err := savingsRepo.FindTransactionByID(uint(id))
+	transaction, err := savingsRepo.FindTransactionByIDWithRekening(uint(id))
 	if err != nil {
 		fmt.Println("❌ Transaction not found:", id)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Transaction not found"})
 		return
 	}
 
-	fmt.Println("✅ Found transaction:", transaction.ID)
+	fmt.Println("✅ Found transaction:", transaction.ID, "Member:", transaction.MemberName, "Rekening:", transaction.RekeningName)
 
 	c.JSON(http.StatusOK, transaction)
 }
@@ -153,6 +154,7 @@ func CreateSavingsTransaction(c *gin.Context) {
     fmt.Printf("  Amount: %d\n", req.Amount)
     fmt.Printf("  Description: %s\n", req.Description)
     fmt.Printf("  TransactionDate: %s\n", req.TransactionDate)
+    fmt.Printf("  RekeningID: %d\n", req.RekeningID)
 
     // Validate saving type code
     savingTypeRepo := repositories.NewSavingTypesRepository()
@@ -278,6 +280,33 @@ func CreateSavingsTransaction(c *gin.Context) {
     fmt.Printf("📊 Saved Transaction Data: ID=%d, SavingAccountID=%d, Amount=%.2f, Type=%s\n",
         transaction.ID, transaction.SavingAccountID, transaction.Amount, transaction.TransactionType)
 
+    // --- BUAT RECORD DI rekening_transaction JIKA REKENING_ID DIISI ---
+    if req.RekeningID > 0 {
+        rekeningTransaction := &models.RekeningTransaction{
+            TransactionType:   "Insert",
+            IDNusvaRekening:   req.RekeningID,
+            TableTransaction:  "saving_transactions",
+            IDTableTransaction: transaction.ID,
+            TanggalTransaksi:  transactionDate,
+            NominalTransaksi:  float64(req.Amount) * -1, // Nominal dikali -1
+            CreatedBy:         operatorName,
+            UpdatedBy:         operatorName,
+            CreatedAt:         time.Now(),
+            UpdatedAt:         time.Now(),
+        }
+
+        rekeningTransactionRepo := repositories.NewRekeningTransactionRepository()
+        if err := rekeningTransactionRepo.Create(rekeningTransaction); err != nil {
+            fmt.Println("❌ Error creating rekening transaction:", err)
+            // Tidak return error ke user karena transaksi utama sudah berhasil
+            // Tapi log error untuk monitoring
+        } else {
+            fmt.Println("✅ Rekening transaction created successfully with ID:", rekeningTransaction.IDRekeningTransaction)
+            fmt.Printf("📊 Rekening Transaction Data: ID=%d, RekeningID=%d, Nominal=%.2f\n",
+                rekeningTransaction.IDRekeningTransaction, rekeningTransaction.IDNusvaRekening, rekeningTransaction.NominalTransaksi)
+        }
+    }
+
     c.JSON(http.StatusCreated, gin.H{
         "message": "Savings transaction created successfully",
         "data":    transaction,
@@ -330,6 +359,11 @@ func UpdateSavingsTransaction(c *gin.Context) {
 		return
 	}
 
+	// Save original values for Reversal calculation
+	originalAmount := transaction.Amount
+	originalTransactionType := transaction.TransactionType
+	fmt.Printf("📊 Original values - Amount: %.2f, Type: %s\n", originalAmount, originalTransactionType)
+
 	// Update transaction fields
 	transaction.TransactionType = req.TransactionType
 	transaction.Amount = float64(req.Amount)
@@ -366,15 +400,14 @@ func UpdateSavingsTransaction(c *gin.Context) {
 				Balance:       0,
 				IsActive:      true,
 			}
-			savingsRepo.CreateSavingAccount(newSavingAccount)
+			if err := savingsRepo.CreateSavingAccount(newSavingAccount); err != nil {
+				fmt.Println("❌ Error creating saving account:", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create saving account"})
+				return
+			}
 		}
 
 		transaction.SavingAccountID = newSavingAccount.ID
-	} else {
-		// Update existing saving account if it was already loaded
-		if transaction.SavingAccount.ID > 0 {
-			savingsRepo.UpdateSavingAccount(&transaction.SavingAccount)
-		}
 	}
 
 	// Save to database
@@ -386,6 +419,74 @@ func UpdateSavingsTransaction(c *gin.Context) {
 	}
 
 	fmt.Println("✅ Savings transaction updated successfully with ID:", transaction.ID)
+
+	// --- BUAT 2 RECORD DI rekening_transaction JIKA REKENING_ID DIISI ---
+	if req.RekeningID > 0 {
+		rekeningTransactionRepo := repositories.NewRekeningTransactionRepository()
+		transactionDate, _ := time.Parse("2006-01-02", req.TransactionDate)
+
+		// Record 1: Reversal - menggunakan nominal dan tipe LAMA (original)
+		// Jika setoran (credit) -> nominal * -1 (untuk membatalkan)
+		// Jika tarikan (debit) -> nominal tidak di kali -1 (untuk membatalkan)
+		var reversalNominal float64
+		if originalTransactionType == "credit" {
+			reversalNominal = originalAmount * -1
+		} else {
+			reversalNominal = originalAmount
+		}
+		fmt.Printf("📊 Reversal - Original Type: %s, Original Amount: %.2f, Reversal Nominal: %.2f\n",
+			originalTransactionType, originalAmount, reversalNominal)
+
+		reversalTransaction := &models.RekeningTransaction{
+			TransactionType:   "Reversal",
+			IDNusvaRekening:   req.RekeningID,
+			TableTransaction:  "saving_transactions",
+			IDTableTransaction: transaction.ID,
+			TanggalTransaksi:  transactionDate,
+			NominalTransaksi:  reversalNominal,
+			CreatedBy:         operatorName,
+			UpdatedBy:         operatorName,
+			CreatedAt:         time.Now(),
+			UpdatedAt:         time.Now(),
+		}
+
+		if err := rekeningTransactionRepo.Create(reversalTransaction); err != nil {
+			fmt.Println("❌ Error creating Reversal rekening transaction:", err)
+		} else {
+			fmt.Println("✅ Reversal rekening transaction created with ID:", reversalTransaction.IDRekeningTransaction)
+		}
+
+		// Record 2: Update - menggunakan nominal dan tipe BARU
+		// Jika setoran (credit) -> nominal tidak di kali -1
+		// Jika tarikan (debit) -> nominal * -1
+		var updateNominal float64
+		if req.TransactionType == "credit" {
+			updateNominal = float64(req.Amount)
+		} else {
+			updateNominal = float64(req.Amount) * -1
+		}
+		fmt.Printf("📊 Update - New Type: %s, New Amount: %d, Update Nominal: %.2f\n",
+			req.TransactionType, req.Amount, updateNominal)
+
+		updateTransaction := &models.RekeningTransaction{
+			TransactionType:   "Update",
+			IDNusvaRekening:   req.RekeningID,
+			TableTransaction:  "saving_transactions",
+			IDTableTransaction: transaction.ID,
+			TanggalTransaksi:  transactionDate,
+			NominalTransaksi:  updateNominal,
+			CreatedBy:         operatorName,
+			UpdatedBy:         operatorName,
+			CreatedAt:         time.Now(),
+			UpdatedAt:         time.Now(),
+		}
+
+		if err := rekeningTransactionRepo.Create(updateTransaction); err != nil {
+			fmt.Println("❌ Error creating Update rekening transaction:", err)
+		} else {
+			fmt.Println("✅ Update rekening transaction created with ID:", updateTransaction.IDRekeningTransaction)
+		}
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Savings transaction updated successfully",
@@ -540,5 +641,30 @@ func GetAllSavingTypesWithBalances(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"data": result,
+	})
+}
+
+// GetAllTransactionsList retrieves all transactions for the Simpanan page
+func GetAllTransactionsList(c *gin.Context) {
+	fmt.Println("📋 Getting all transactions list...")
+
+	limit := 500
+	if l := c.Query("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+
+	savingsRepo := repositories.NewSavingsRepository()
+	transactions, total, err := savingsRepo.ListAllTransactions(limit)
+	if err != nil {
+		fmt.Println("❌ Error getting all transactions:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve transactions"})
+		return
+	}
+
+	fmt.Println("✅ Retrieved", len(transactions), "transactions")
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":  transactions,
+		"total": total,
 	})
 }

@@ -2,8 +2,6 @@ package models
 
 import (
 	"time"
-
-	"gorm.io/gorm"
 )
 
 type SavingTransaction struct {
@@ -20,33 +18,21 @@ type SavingTransaction struct {
 	UpdatedBy        string    `json:"updated_by"`
 	CreatedAt        time.Time `json:"created_at"`
 
-	// Legacy fields for backward compatibility (deprecated)
-	AccountType string `gorm:"-" json:"account_type,omitempty"` // derived from saving_account.account_type.code
-	MemberID   uint   `gorm:"-" json:"member_id,omitempty"`   // derived from saving_account.member_id
-	MemberName string `gorm:"-" json:"member_name,omitempty"` // derived from saving_account.member.full_name
+	// Fields for list queries (from joins) - use column tag for raw SQL mapping
+	MemberID        uint   `gorm:"column:member_id" json:"member_id,omitempty"`
+	MemberNo        string `gorm:"column:member_no" json:"member_no,omitempty"`
+	MemberName      string `gorm:"column:member_name" json:"member_name,omitempty"`
+	AccountTypeID   uint   `gorm:"column:account_type_id" json:"account_type_id,omitempty"`
+	AccountType     string `gorm:"column:account_type" json:"account_type,omitempty"`
+	AccountTypeName string `gorm:"column:account_type_name" json:"account_type_name,omitempty"`
+	RekeningID      uint   `gorm:"column:rekening_id" json:"rekening_id,omitempty"`
+	RekeningName    string `gorm:"column:rekening_name" json:"rekening_name,omitempty"`
+	RekeningNo      string `gorm:"column:rekening_no" json:"rekening_no,omitempty"`
 }
 
 // TableName specifies the table name for GORM
 func (SavingTransaction) TableName() string {
 	return "saving_transactions"
-}
-
-// GetAccountTypeCode returns the account type code (backward compatibility helper)
-func (st *SavingTransaction) GetAccountTypeCode() string {
-	if st.AccountType != "" {
-		return st.AccountType // Use legacy field if available
-	}
-	return st.SavingAccount.GetAccountTypeCode()
-}
-
-// AfterFind GORM hook to populate legacy fields for backward compatibility
-func (st *SavingTransaction) AfterFind(tx *gorm.DB) error {
-	if st.SavingAccount.ID > 0 {
-		st.AccountType = st.SavingAccount.GetAccountTypeCode()
-		st.MemberID = st.SavingAccount.MemberID
-		st.MemberName = st.SavingAccount.Member.FullName
-	}
-	return nil
 }
 
 const (

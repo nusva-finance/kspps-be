@@ -7,7 +7,7 @@ import (
 )
 
 type Pembiayaan struct {
-	IDPinjaman       int        `gorm:"column:idpinjaman;primaryKey" json:"id"`
+	IDPinjaman       int        `gorm:"column:idpinjaman;primaryKey" json:"idpinjaman"`
 	IDMember         int        `gorm:"column:idmember;not null" json:"idmember"`
 	TipePinjaman     string     `gorm:"column:tipepinjaman;not null" json:"tipepinjaman"`
 	TanggalPinjaman  time.Time  `gorm:"column:tanggalpinjaman;not null" json:"tanggalpinjaman"`
@@ -18,16 +18,13 @@ type Pembiayaan struct {
 	NominalPembelian float64    `gorm:"column:nominalpembelian;not null" json:"nominalpembelian"`
 	TglJtAngsuran1  time.Time  `gorm:"column:tgljtangsuran1;not null" json:"tgljtangsuran1"`
 	SysRevID        int        `gorm:"column:sysrevid" json:"sysrevid"`
-	
+
 	CreatedBy        string     `gorm:"column:created_by" json:"created_by"`
 	UpdatedBy        string     `gorm:"column:updated_by" json:"updated_by"`
 	CreatedAt        time.Time  `gorm:"column:created_at" json:"created_at"`
 	UpdatedAt        time.Time  `gorm:"column:updated_at" json:"updated_at"`
-	
 
-	// Joined fields (not persisted)
-	NamaAnggota string `gorm:"-" json:"namaanggota,omitempty"`
-	MemberNo     string `gorm:"-" json:"member_no,omitempty"`
+
 }
 
 func (Pembiayaan) TableName() string {
@@ -36,6 +33,13 @@ func (Pembiayaan) TableName() string {
 
 type PembiayaanWithMemberName struct {
 	Pembiayaan
-	NamaAnggota string `json:"namaanggota"` 
-	MemberNo    string `json:"member_no"`
+	// Tag column harus sama dengan alias di SELECT repository (as nama_anggota)
+	NamaAnggota     string  `gorm:"column:nama_anggota" json:"namaanggota"`
+	MemberNo        string  `gorm:"column:member_no" json:"member_no"`
+	TotalPembayaran float64 `gorm:"column:total_pembayaran" json:"totalpembayaran"`
+}
+
+// TableName for GORM
+func (PembiayaanWithMemberName) TableName() string {
+	return "pembiayaan"
 }

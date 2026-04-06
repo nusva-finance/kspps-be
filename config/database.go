@@ -192,6 +192,53 @@ func createMarginSetupsTable(db *gorm.DB) error {
 	return nil
 }
 
+// createRekeningTransactionsTable creates rekening_transactions table
+func createRekeningTransactionsTable(db *gorm.DB) error {
+	// Check if table exists
+	var tableExists bool
+	err := db.Raw("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'rekening_transactions')").Scan(&tableExists).Error
+	if err != nil {
+		return err
+	}
+
+	if tableExists {
+		return nil // Table already exists
+	}
+
+	// Create table
+	err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS rekening_transactions (
+			id SERIAL PRIMARY KEY,
+			rekening_id INTEGER NOT NULL,
+			transaction_type VARCHAR(50) NOT NULL,
+			amount DECIMAL(18,2) NOT NULL,
+			description TEXT,
+			reference_id INTEGER,
+			reference_type VARCHAR(50),
+			created_by VARCHAR(100),
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)
+	`).Error
+
+	if err != nil {
+		return err
+	}
+
+	// Create indexes
+	err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_rekening_transactions_rekening_id ON rekening_transactions(rekening_id)`).Error
+	if err != nil {
+		log.Printf("Warning: Failed to create index: %v", err)
+	}
+
+	err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_rekening_transactions_type ON rekening_transactions(transaction_type)`).Error
+	if err != nil {
+		log.Printf("Warning: Failed to create index: %v", err)
+	}
+
+	return nil
+}
+
 // runMigrations handles all database migrations in a controlled way
 func runMigrations(db *gorm.DB) error {
 	// Migration 1: Add deleted_at column to users table
@@ -207,6 +254,11 @@ func runMigrations(db *gorm.DB) error {
 	// Migration 3: Create margin_setups table
 	if err := runMigrationOnce(db, 2024031502, createMarginSetupsTable); err != nil {
 		return fmt.Errorf("migration %d failed: %w", 2024031502, err)
+	}
+
+	// Migration 4: Create rekening_transaction table
+	if err := runMigrationOnce(db, 2025031801, createRekeningTransactionsTable); err != nil {
+		return fmt.Errorf("migration %d failed: %w", 2025031801, err)
 	}
 
 	return nil

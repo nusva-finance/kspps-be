@@ -38,6 +38,55 @@ func (r *SavingsRepository) FindTransactionByID(id uint) (*models.SavingTransact
 	return &transaction, nil
 }
 
+// FindTransactionByIDWithRekening finds a transaction by ID with member and latest rekening info
+func (r *SavingsRepository) FindTransactionByIDWithRekening(id uint) (*TransactionListRow, error) {
+	var result TransactionListRow
+
+	query := `
+		SELECT
+			st.id,
+			st.saving_account_id,
+			st.transaction_type,
+			st.amount,
+			st.description,
+			st.balance_before,
+			st.balance_after,
+			st.transaction_date,
+			st.created_by,
+			st.created_at,
+			sa.member_id,
+			m.member_no,
+			m.full_name as member_name,
+			sa.account_type_id,
+			sty.code as account_type,
+			sty.name as account_type_name,
+			COALESCE(rt.idnusvarekening, 0) as rekening_id,
+			COALESCE(r.namarekening, '') as rekening_name,
+			COALESCE(r.norekening, '') as rekening_no
+		FROM saving_transactions st
+		JOIN saving_accounts sa ON st.saving_account_id = sa.id
+		JOIN members m ON sa.member_id = m.id
+		JOIN saving_types sty ON sa.account_type_id = sty.id
+		LEFT JOIN LATERAL (
+			SELECT idnusvarekening
+			FROM rekening_transaction rt2
+			WHERE rt2.tabletransaction = 'saving_transactions'
+			  AND rt2.idtabletransaction = st.id
+			ORDER BY rt2.created_at DESC
+			LIMIT 1
+		) rt ON true
+		LEFT JOIN nusva_rekening r ON rt.idnusvarekening = r.idnusvarekening
+		WHERE st.id = ?
+	`
+
+	err := r.db.Raw(query, id).Scan(&result).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
 // ListTransactions retrieves transactions with pagination
 func (r *SavingsRepository) ListTransactions(offset, limit int) ([]models.SavingTransaction, int64, error) {
 	var transactions []models.SavingTransaction
@@ -110,7 +159,17 @@ func (r *SavingsRepository) SearchTransactions(keyword string, offset, limit int
 
 // UpdateTransaction updates an existing transaction
 func (r *SavingsRepository) UpdateTransaction(transaction *models.SavingTransaction) error {
-	return r.db.Save(transaction).Error
+	// Use Updates with specific fields to avoid GORM trying to update associations
+	return r.db.Model(&models.SavingTransaction{}).
+		Where("id = ?", transaction.ID).
+		Updates(map[string]interface{}{
+			"saving_account_id": transaction.SavingAccountID,
+			"transaction_type":  transaction.TransactionType,
+			"amount":            transaction.Amount,
+			"description":       transaction.Description,
+			"transaction_date":  transaction.TransactionDate,
+			"updated_by":        transaction.UpdatedBy,
+		}).Error
 }
 
 // DeleteTransaction deletes a transaction
@@ -310,4 +369,81 @@ func (r *SavingsRepository) GetAllMemberBalances() ([]map[string]interface{}, in
 	}
 
 	return results, total, nil
+}
+
+// TransactionListRow represents a row in the transaction list response
+type TransactionListRow struct {
+	ID               uint      `json:"id"`
+	SavingAccountID  uint      `json:"saving_account_id"`
+	TransactionType  string    `json:"transaction_type"`
+	Amount           float64   `json:"amount"`
+	Description      string    `json:"description"`
+	BalanceBefore    float64   `json:"balance_before"`
+	BalanceAfter     float64   `json:"balance_after"`
+	TransactionDate  time.Time `json:"transaction_date"`
+	CreatedBy        string    `json:"created_by"`
+	CreatedAt        time.Time `json:"created_at"`
+	MemberID         uint      `json:"member_id"`
+	MemberNo         string    `json:"member_no"`
+	MemberName       string    `json:"member_name"`
+	AccountTypeID    uint      `json:"account_type_id"`
+	AccountType      string    `json:"account_type"`
+	AccountTypeName  string    `json:"account_type_name"`
+	RekeningID       uint      `json:"rekening_id"`
+	RekeningName     string    `json:"rekening_name"`
+	RekeningNo       string    `json:"rekening_no"`
+}
+
+// ListAllTransactions retrieves all transactions for the Simpanan page (with member info and rekening info)
+func (r *SavingsRepository) ListAllTransactions(limit int) ([]TransactionListRow, int64, error) {
+	var transactions []TransactionListRow
+	var total int64
+
+	err := r.db.Model(&models.SavingTransaction{}).Count(&total).Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	query := `
+		SELECT
+			st.id,
+			st.saving_account_id,
+			st.transaction_type,
+			st.amount,
+			st.description,
+			st.balance_before,
+			st.balance_after,
+			st.transaction_date,
+			st.created_by,
+			st.created_at,
+			sa.member_id,
+			m.member_no,
+			m.full_name as member_name,
+			sa.account_type_id,
+			sty.code as account_type,
+			sty.name as account_type_name,
+			COALESCE(rt.idnusvarekening, 0) as rekening_id,
+			COALESCE(r.namarekening, '') as rekening_name,
+			COALESCE(r.norekening, '') as rekening_no
+		FROM saving_transactions st
+		JOIN saving_accounts sa ON st.saving_account_id = sa.id
+		JOIN members m ON sa.member_id = m.id
+		JOIN saving_types sty ON sa.account_type_id = sty.id
+		LEFT JOIN rekening_transaction rt ON rt.tabletransaction = 'saving_transactions' AND rt.idtabletransaction = st.id AND rt.transactiontype = 'Insert'
+		LEFT JOIN nusva_rekening r ON rt.idnusvarekening = r.idnusvarekening
+		ORDER BY st.transaction_date DESC, st.created_at DESC
+	`
+
+	if limit > 0 {
+		query += " LIMIT ?"
+		err = r.db.Raw(query, limit).Scan(&transactions).Error
+	} else {
+		err = r.db.Raw(query).Scan(&transactions).Error
+	}
+
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return transactions, total, nil
 }

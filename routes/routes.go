@@ -75,6 +75,7 @@ func RegisterRoutes(router *gin.Engine) {
 
 			// Saving Transactions
 				savings.GET("/transactions", handlers.GetSavingsTransactions)
+				savings.GET("/transactions/all", handlers.GetAllTransactionsList)
 				savings.GET("/transactions/:id", handlers.GetSavingsTransactionByID)
 				savings.POST("/transactions", handlers.CreateSavingsTransaction)
 				savings.PUT("/transactions/:id", handlers.UpdateSavingsTransaction)
@@ -127,6 +128,7 @@ func RegisterRoutes(router *gin.Engine) {
 			{
 				rekening.GET("", handlers.GetRekenings)
 				rekening.GET("/:id", handlers.GetRekeningByID)
+				rekening.GET("/:id/mutasi", handlers.GetMutasiRekening)
 				rekening.POST("", handlers.CreateRekening)
 				rekening.PUT("/:id", handlers.UpdateRekening)
 				rekening.DELETE("/:id", handlers.DeleteRekening)
@@ -138,9 +140,20 @@ func RegisterRoutes(router *gin.Engine) {
 				pembiayaan.GET("", handlers.GetPembiayaan)
 				pembiayaan.GET("/margin", handlers.GetMarginByCategoryAndTenor)
 				pembiayaan.GET("/:id", handlers.GetPembiayaanByID)
+				pembiayaan.GET("/:id/pembayaran", handlers.GetPembayaranByPinjamanID)
+				pembiayaan.GET("/:id/angsuranke", handlers.GetAngsuranKe)
 				pembiayaan.POST("", handlers.CreatePembiayaan)
 				pembiayaan.PUT("/:id", handlers.UpdatePembiayaan)
 				pembiayaan.DELETE("/:id", handlers.DeletePembiayaan)
+			}
+
+			// Pembayaran Pembiayaan (standalone endpoints)
+			pembayaran := protected.Group("/pembayaran-pembiayaan")
+			{
+				pembayaran.GET("/:id", handlers.GetPembayaranByID)
+				pembayaran.POST("", handlers.CreatePembayaran)
+				pembayaran.PUT("/:id", handlers.UpdatePembayaran)
+				pembayaran.DELETE("/:id", handlers.DeletePembayaran)
 			}
 
 		}
