@@ -10,7 +10,7 @@ type User struct {
 	ID           uint      `gorm:"primaryKey" json:"id"`
 	Username     string    `gorm:"uniqueIndex;not null" json:"username"`
 	Email        string    `gorm:"uniqueIndex;not null" json:"email"`
-	PasswordHash string    `gorm:"not null" json:"-"`
+	PasswordHash string    `gorm:"column:password_hash;not null" json:"-"`	
 	FullName     string    `gorm:"not null" json:"full_name"`
 	PhoneNumber  string    `json:"phone_number"`
 	IsActive     bool      `gorm:"default:true" json:"is_active"`

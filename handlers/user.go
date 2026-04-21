@@ -26,6 +26,7 @@ type UpdateUserRequest struct {
 	Email    *string  `json:"email"`
 	IsActive *bool    `json:"is_active"`
 	Roles   []string `json:"roles"`
+	Password *string  `json:"password"`
 }
 
 func GetUsers(c *gin.Context) {
@@ -208,7 +209,6 @@ func CreateUser(c *gin.Context) {
 }
 
 func UpdateUser(c *gin.Context) {
-
 	operatorName := c.GetString("current_user_name")
 	
 	idParam := c.Param("id")
@@ -225,7 +225,6 @@ func UpdateUser(c *gin.Context) {
 	}
 
 	fmt.Println("📝 Updating user:", id, "with data:", req)
-	fmt.Println("📋 Roles yang diterima:", req.Roles)
 
 	userRepo := repositories.NewUserRepository()
 	user, err := userRepo.FindByID(id)
@@ -242,59 +241,63 @@ func UpdateUser(c *gin.Context) {
 		return
 	}
 
-	// Handle role updates FIRST before saving user data
+	// =============================================================
+	// 1. HANDLE ROLE UPDATES
+	// =============================================================
 	if len(req.Roles) > 0 {
 		roleRepo := repositories.NewRoleRepository()
-		fmt.Println("📋 Updating roles for user:", id)
-
-		// Get current user with current roles
-		currentUser, err := userRepo.FindByID(id)
-		if err != nil {
-			fmt.Println("❌ Error finding user for role update:", err)
-			tx.Rollback()
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to find user"})
-			return
-		}
-
+		
 		// Remove all old roles
-		for _, role := range currentUser.Roles {
-			fmt.Printf("🗑️ Removing old role: %s from user %d\n", role.Name, id)
+		for _, role := range user.Roles {
 			if err := userRepo.RemoveRole(id, role.ID); err != nil {
-				fmt.Printf("❌ Error removing role: %v\n", err)
 				tx.Rollback()
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove old roles"})
 				return
-			} else {
-				fmt.Printf("✅ Role %s removed successfully\n", role.Name)
 			}
 		}
 
 		// Add new roles
 		for _, roleName := range req.Roles {
-			fmt.Printf("➕ Adding role: %s to user %d\n", roleName, id)
 			role, err := roleRepo.FindByName(roleName)
 			if err != nil {
-				fmt.Printf("❌ Role not found: %s, error: %v\n", roleName, err)
 				tx.Rollback()
 				c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("Role '%s' not found", roleName)})
 				return
 			}
-
 			if err := userRepo.AssignRole(id, role.ID); err != nil {
-				fmt.Printf("❌ Error assigning role: %v\n", err)
 				tx.Rollback()
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to assign role"})
 				return
-			} else {
-				fmt.Printf("✅ Role %s assigned successfully\n", roleName)
 			}
 		}
 	}
 
-	// Update basic user fields (without relationships)
+	// =============================================================
+	// 2. HANDLE PASSWORD UPDATE (THE MISSING PIECE)
+	// =============================================================
+	if req.Password != nil && *req.Password != "" {
+		fmt.Println("🔐 Password baru terdeteksi, melakukan hashing...")
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(*req.Password), 10)
+		if err != nil {
+			fmt.Println("❌ Error hashing password:", err)
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process password"})
+			return
+		}
+		// Update hash dan otomatis buka kunci akun jika sedang locked
+		user.PasswordHash = string(hashedPassword)
+		user.IsLocked = false
+		user.FailedLogin = 0
+		fmt.Println("✅ Password hash updated successfully")
+	}
+
+	// =============================================================
+	// 3. UPDATE BASIC FIELDS
+	// =============================================================
 	if req.FullName != nil {
 		user.FullName = *req.FullName
 	}
+	
 	if req.Email != nil {
 		// Check if email already exists (excluding current user)
 		if existing, _ := userRepo.FindByEmail(*req.Email); existing != nil && existing.ID != id {
@@ -304,15 +307,16 @@ func UpdateUser(c *gin.Context) {
 		}
 		user.Email = *req.Email
 	}
+
 	if req.IsActive != nil {
 		user.IsActive = *req.IsActive
 	}
 
 	user.UpdatedBy = operatorName
 
-	// Save only the user basic fields (not relationships)
+	// Save the updated user object
 	if err := userRepo.Update(user); err != nil {
-		fmt.Println("❌ Error updating user:", err)
+		fmt.Println("❌ Error updating user basic fields:", err)
 		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update user"})
 		return
@@ -325,22 +329,24 @@ func UpdateUser(c *gin.Context) {
 		return
 	}
 
-	fmt.Println("✅ Transaction committed successfully")
-
-	// Reload user with updated roles for response
-	fmt.Println("🔄 Reloading user with updated roles for response")
+	// Reload for final response
 	user, _ = userRepo.FindByID(id)
 
 	fmt.Println("✅ User updated successfully")
-	fmt.Printf("📊 Final user state: ID=%d, FullName=%s, Email=%s, IsActive=%v, Roles=%d\n",
-		user.ID, user.FullName, user.Email, user.IsActive, len(user.Roles))
-
 	c.JSON(http.StatusOK, gin.H{
 		"message": "User updated successfully",
 		"id":      id,
 		"data":    user,
 	})
+
+	if req.Password != nil {
+    	fmt.Printf("🔑 PASSWORD DITERIMA DARI FRONTEND: [%s]\n", *req.Password)
+	} else {
+    	fmt.Println("⚠️ PASSWORD TIDAK DITERIMA (NIL). Cek nama field di Frontend!")
+	}
+
 }
+
 
 func DeleteUser(c *gin.Context) {
 	idParam := c.Param("id")

@@ -33,4 +33,9 @@ type PembayaranPembiayaanWithDetails struct {
 	NamaAnggota string `gorm:"column:nama_anggota" json:"nama_anggota"`
 	MemberNo    string `gorm:"column:member_no" json:"member_no"`
 	IDMember    int    `gorm:"column:idmember" json:"idmember"`
+	
+	// --- TAMBAHAN UNTUK REKENING ---
+	IDNusvaRekening uint   `gorm:"column:idnusvarekening" json:"idnusvarekening"`
+	NamaRekening    string `gorm:"column:namarekening" json:"namarekening"`
+	NoRekening      string `gorm:"column:norekening" json:"norekening"`
 }

@@ -15,7 +15,7 @@ func RegisterRoutes(router *gin.Engine) {
 	// API v1
 	v1 := router.Group("/api/v1")
 	{
-		// Auth routes (public)
+		// --- AUTH ROUTES (Public) ---
 		auth := v1.Group("/auth")
 		{
 			auth.POST("/login", handlers.Login)
@@ -23,139 +23,132 @@ func RegisterRoutes(router *gin.Engine) {
 			auth.POST("/refresh", handlers.RefreshToken)
 		}
 
-		// Protected routes
+		// --- PROTECTED ROUTES (Harus Login) ---
 		protected := v1.Group("")
 		protected.Use(middleware.AuthMiddleware())
 		{
-			// Dashboard
+			// Dashboard (Asal login boleh lihat)
 			protected.GET("/dashboard", handlers.GetDashboard)
 
-			// Users
+			// ---------------------------------------------------------
+			// 1. USERS & SECURITY
+			// ---------------------------------------------------------
 			users := protected.Group("/users")
 			{
-				users.GET("", handlers.GetUsers)
-				users.GET("/:id", handlers.GetUserByID)
-				users.POST("", handlers.CreateUser)
-				users.PUT("/:id", handlers.UpdateUser)
-				users.DELETE("/:id", handlers.DeleteUser)
+				users.GET("", middleware.PermissionMiddleware("users.view"), handlers.GetUsers)
+				users.GET("/:id", middleware.PermissionMiddleware("users.view"), handlers.GetUserByID)
+				users.POST("", middleware.PermissionMiddleware("users.create"), handlers.CreateUser)
+				users.PUT("/:id", middleware.PermissionMiddleware("users.update"), handlers.UpdateUser)
+				users.DELETE("/:id", middleware.PermissionMiddleware("users.delete"), handlers.DeleteUser)
 			}
 
-			// Members
-			members := protected.Group("/members")
-			{
-				members.GET("", handlers.GetMembers)
-				members.GET("/:id", handlers.GetMemberByID)
-				members.POST("", handlers.CreateMember)
-				members.PUT("/:id", handlers.UpdateMember)
-				members.DELETE("/:id", handlers.DeleteMember)
-			}
-
-			// Savings
-			savings := protected.Group("/savings")
-			{
-				// Saving Types (dynamic configuration)
-				savingTypes := savings.Group("/types")
-				{
-					savingTypes.GET("", handlers.GetSavingTypes)
-					savingTypes.GET("/:id", handlers.GetSavingTypeByID)
-					savingTypes.POST("", handlers.CreateSavingType)
-					savingTypes.PUT("/:id", handlers.UpdateSavingType)
-					savingTypes.DELETE("/:id", handlers.DeleteSavingType)
-					savingTypes.POST("/initialize", handlers.InitializeSavingTypes)
-				}
-
-				// Saving Accounts
-				savings.GET("/accounts", handlers.GetAllSavingsAccounts)
-
-			// Saving Types with Total Balances
-				savingsTypesGroup := savings.Group("/types")
-				{
-					savingsTypesGroup.GET("/balances", handlers.GetAllSavingTypesWithBalances)
-				}
-
-			// Saving Transactions
-				savings.GET("/transactions", handlers.GetSavingsTransactions)
-				savings.GET("/transactions/all", handlers.GetAllTransactionsList)
-				savings.GET("/transactions/:id", handlers.GetSavingsTransactionByID)
-				savings.POST("/transactions", handlers.CreateSavingsTransaction)
-				savings.PUT("/transactions/:id", handlers.UpdateSavingsTransaction)
-				savings.DELETE("/transactions/:id", handlers.DeleteSavingsTransaction)
-
-				// Member Balances
-				savings.GET("/member/:memberId/balance", handlers.GetMemberSavingsBalance)
-
-				// Legacy endpoints (for backward compatibility)
-				savings.GET("", handlers.GetSavingsTransactions)
-				savings.GET("/:id", handlers.GetSavingsTransactionByID)
-				savings.POST("", handlers.CreateSavingsTransaction)
-				savings.PUT("/:id", handlers.UpdateSavingsTransaction)
-				savings.DELETE("/:id", handlers.DeleteSavingsTransaction)
-			}
-
-
-			// Security
 			security := protected.Group("/security")
 			{
-				security.GET("/roles", handlers.GetRoles)
-				security.POST("/roles", handlers.CreateRole)
-				security.GET("/menus", handlers.GetMenus)
-				security.GET("/permissions", handlers.GetPermissions)
-				security.POST("/roles/:role-id/permissions", handlers.AssignPermissions)
-				security.GET("/audit-logs", handlers.GetAuditLogs)
+				security.GET("/roles", middleware.PermissionMiddleware("security.view"), handlers.GetRoles)
+				security.POST("/roles", middleware.PermissionMiddleware("security.manage"), handlers.CreateRole)
+				security.GET("/menus", middleware.PermissionMiddleware("security.view"), handlers.GetMenus)
+				security.GET("/permissions", middleware.PermissionMiddleware("security.view"), handlers.GetPermissions)
+				security.POST("/roles/:role-id/permissions", middleware.PermissionMiddleware("security.manage"), handlers.AssignPermissions)
+				security.GET("/roles/:role-id/permissions", middleware.PermissionMiddleware("security.view"), handlers.GetRolePermissions)
+				security.GET("/audit-logs", middleware.PermissionMiddleware("security.audit"), handlers.GetAuditLogs)
 			}
 
+			// ---------------------------------------------------------
+			// 2. MEMBERS
+			// ---------------------------------------------------------
+			members := protected.Group("/members")
+			{
+				members.GET("", middleware.PermissionMiddleware("members.view"), handlers.GetMembers)
+				members.GET("/:id", middleware.PermissionMiddleware("members.view"), handlers.GetMemberByID)
+				members.POST("", middleware.PermissionMiddleware("members.create"), handlers.CreateMember)
+				members.PUT("/:id", middleware.PermissionMiddleware("members.update"), handlers.UpdateMember)
+				members.DELETE("/:id", middleware.PermissionMiddleware("members.delete"), handlers.DeleteMember)
+				
+				// Rute Import ditaruh di sini (di dalam group members)
+				members.POST("/import", middleware.PermissionMiddleware("members.import"), handlers.ImportMembers)
+			}
+
+			// ---------------------------------------------------------
+			// 3. SAVINGS (SIMPANAN)
+			// ---------------------------------------------------------
+			savings := protected.Group("/savings")
+			{
+				// Saving Types
+				savingTypes := savings.Group("/types")
+				{
+					savingTypes.GET("", middleware.PermissionMiddleware("savings.config"), handlers.GetSavingTypes)
+					savingTypes.POST("", middleware.PermissionMiddleware("savings.config"), handlers.CreateSavingType)
+					savingTypes.PUT("/:id", middleware.PermissionMiddleware("savings.config"), handlers.UpdateSavingType)
+					savingTypes.DELETE("/:id", middleware.PermissionMiddleware("savings.config"), handlers.DeleteSavingType)
+					savingTypes.POST("/initialize", middleware.PermissionMiddleware("savings.config"), handlers.InitializeSavingTypes)
+					savingTypes.GET("/balances", middleware.PermissionMiddleware("savings.view"), handlers.GetAllSavingTypesWithBalances)
+				}
+
+				// Accounts & Transactions
+				savings.GET("/accounts", middleware.PermissionMiddleware("savings.view"), handlers.GetAllSavingsAccounts)
+				savings.GET("/transactions", middleware.PermissionMiddleware("savings.view"), handlers.GetSavingsTransactions)
+				savings.GET("/transactions/all", middleware.PermissionMiddleware("savings.view"), handlers.GetAllTransactionsList)
+				savings.POST("/transactions", middleware.PermissionMiddleware("savings.transaction"), handlers.CreateSavingsTransaction)
+				savings.PUT("/transactions/:id", middleware.PermissionMiddleware("savings.update"), handlers.UpdateSavingsTransaction)
+				savings.DELETE("/transactions/:id", middleware.PermissionMiddleware("savings.delete"), handlers.DeleteSavingsTransaction)
+				savings.GET("/member/:memberId/balance", middleware.PermissionMiddleware("savings.view"), handlers.GetMemberSavingsBalance)
+			}
+
+			// ---------------------------------------------------------
+			// 4. PEMBIAYAAN & MARGIN
+			// ---------------------------------------------------------
 			margin := protected.Group("/margin-setups")
 			{
-				margin.GET("", handlers.GetMargins)
-				margin.GET("/:id", handlers.GetMarginByID)
-				margin.POST("", handlers.CreateMargin)
-				margin.PUT("/:id", handlers.UpdateMargin)
-				margin.DELETE("/:id", handlers.DeleteMargin)
+				margin.GET("", middleware.PermissionMiddleware("config.view"), handlers.GetMargins)
+				margin.POST("", middleware.PermissionMiddleware("config.manage"), handlers.CreateMargin)
+				margin.PUT("/:id", middleware.PermissionMiddleware("config.manage"), handlers.UpdateMargin)
+				margin.DELETE("/:id", middleware.PermissionMiddleware("config.manage"), handlers.DeleteMargin)
 			}
 
-			// Kategori Barang
-			kategoriBarang := protected.Group("/kategori-barangs")
-			{
-				kategoriBarang.GET("", handlers.GetKategoriBarangs)
-				kategoriBarang.GET("/:id", handlers.GetKategoriBarangByID)
-				kategoriBarang.POST("", handlers.CreateKategoriBarang)
-				kategoriBarang.PUT("/:id", handlers.UpdateKategoriBarang)
-				kategoriBarang.DELETE("/:id", handlers.DeleteKategoriBarang)
-			}
-
-			// Rekening
-			rekening := protected.Group("/rekening")
-			{
-				rekening.GET("", handlers.GetRekenings)
-				rekening.GET("/:id", handlers.GetRekeningByID)
-				rekening.GET("/:id/mutasi", handlers.GetMutasiRekening)
-				rekening.POST("", handlers.CreateRekening)
-				rekening.PUT("/:id", handlers.UpdateRekening)
-				rekening.DELETE("/:id", handlers.DeleteRekening)
-			}
-
-			// Pembiayaan
 			pembiayaan := protected.Group("/pembiayaan")
 			{
-				pembiayaan.GET("", handlers.GetPembiayaan)
-				pembiayaan.GET("/margin", handlers.GetMarginByCategoryAndTenor)
-				pembiayaan.GET("/:id", handlers.GetPembiayaanByID)
-				pembiayaan.GET("/:id/pembayaran", handlers.GetPembayaranByPinjamanID)
-				pembiayaan.GET("/:id/angsuranke", handlers.GetAngsuranKe)
-				pembiayaan.POST("", handlers.CreatePembiayaan)
-				pembiayaan.PUT("/:id", handlers.UpdatePembiayaan)
-				pembiayaan.DELETE("/:id", handlers.DeletePembiayaan)
+				pembiayaan.GET("", middleware.PermissionMiddleware("pembiayaan.view"), handlers.GetPembiayaan)
+				pembiayaan.POST("", middleware.PermissionMiddleware("pembiayaan.create"), handlers.CreatePembiayaan)
+				pembiayaan.PUT("/:id", middleware.PermissionMiddleware("pembiayaan.update"), handlers.UpdatePembiayaan)
+				pembiayaan.DELETE("/:id", middleware.PermissionMiddleware("pembiayaan.delete"), handlers.DeletePembiayaan)
+				pembiayaan.GET("/:id/pembayaran", middleware.PermissionMiddleware("pembiayaan.view"), handlers.GetPembayaranByPinjamanID)
+				pembiayaan.GET("/margin", middleware.PermissionMiddleware("pembiayaan.view"), handlers.GetMarginByCategoryAndTenor)
 			}
 
-			// Pembayaran Pembiayaan (standalone endpoints)
 			pembayaran := protected.Group("/pembayaran-pembiayaan")
 			{
-				pembayaran.GET("/:id", handlers.GetPembayaranByID)
-				pembayaran.POST("", handlers.CreatePembayaran)
-				pembayaran.PUT("/:id", handlers.UpdatePembayaran)
-				pembayaran.DELETE("/:id", handlers.DeletePembayaran)
+				pembayaran.POST("", middleware.PermissionMiddleware("pembiayaan.pay"), handlers.CreatePembayaran)
+				pembayaran.DELETE("/:id", middleware.PermissionMiddleware("pembiayaan.delete"), handlers.DeletePembayaran)
 			}
 
+			// ---------------------------------------------------------
+			// 5. QARD HASSAN
+			// ---------------------------------------------------------
+			qardhassan := protected.Group("/qardhassan")
+			{
+				qardhassan.GET("", middleware.PermissionMiddleware("qardhassan.view"), handlers.GetQardHassan)
+				qardhassan.GET("/:id", middleware.PermissionMiddleware("qardhassan.view"), handlers.GetQardHassanByID)
+				qardhassan.POST("", middleware.PermissionMiddleware("qardhassan.create"), handlers.CreateQardHassan)
+				qardhassan.PUT("/:id", middleware.PermissionMiddleware("qardhassan.update"), handlers.UpdateQardHassan)
+				qardhassan.DELETE("/:id", middleware.PermissionMiddleware("qardhassan.delete"), handlers.DeleteQardHassan)
+				qardhassan.POST("/:id/pay", middleware.PermissionMiddleware("qardhassan.pay"), handlers.PayQardHassan)
+			}
+
+			// ---------------------------------------------------------
+			// 6. MASTER DATA (REKENING, KATEGORI)
+			// ---------------------------------------------------------
+			rekening := protected.Group("/rekening")
+			{
+				rekening.GET("", middleware.PermissionMiddleware("rekening.view"), handlers.GetRekenings)
+				rekening.POST("", middleware.PermissionMiddleware("rekening.manage"), handlers.CreateRekening)
+				rekening.GET("/:id/mutasi", middleware.PermissionMiddleware("rekening.view"), handlers.GetMutasiRekening)
+			}
+
+			kategoriBarang := protected.Group("/kategori-barangs")
+			{
+				kategoriBarang.GET("", middleware.PermissionMiddleware("config.view"), handlers.GetKategoriBarangs)
+				kategoriBarang.POST("", middleware.PermissionMiddleware("config.manage"), handlers.CreateKategoriBarang)
+			}
 		}
 	}
 }

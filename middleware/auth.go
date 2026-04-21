@@ -50,17 +50,32 @@ func AuthMiddleware() gin.HandlerFunc {
 
 		// 5. Ekstrak data dari Claims
 		if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-			// Simpan user_id dan user_name ke Context Gin
-			// Ini yang akan jadi SUMBER untuk kolom created_by dan updated_by
-			
-			// Ambil user_id (di JWT biasanya tersimpan sebagai float64)
+			// --- Simpan user_id ---
 			if id, ok := claims["user_id"].(float64); ok {
 				c.Set("current_user_id", uint(id))
 			}
 
-			// Ambil username
+			// --- Simpan username ---
 			if username, ok := claims["username"].(string); ok {
 				c.Set("current_user_name", username)
+			}
+
+			// --- SETUP ROLES (TAMBAHKAN BAGIAN INI) ---
+			if rolesInterface, ok := claims["roles"]; ok {
+				// JWT biasanya menyimpan array sebagai interface slice
+				var roles []string
+				if rolesSlice, ok := rolesInterface.([]interface{}); ok {
+					for _, r := range rolesSlice {
+						if roleStr, ok := r.(string); ok {
+							roles = append(roles, roleStr)
+						}
+					}
+				}
+				// Simpan ke context dengan nama yang dicari PermissionMiddleware
+				c.Set("user_roles", roles) 
+				fmt.Println("🔑 Roles found in token:", roles) // Debugging
+			} else {
+				fmt.Println("⚠️ No roles found in token claims!")
 			}
 		}
 

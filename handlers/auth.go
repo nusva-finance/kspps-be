@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -9,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
+	"nusvakspps/config"
 	"nusvakspps/models"
 	"nusvakspps/repositories"
 )
@@ -19,8 +21,8 @@ type LoginRequest struct {
 }
 
 type LoginResponse struct {
-	Token        string      `json:"token"`
-	RefreshToken string      `json:"refresh_token"`
+	Token        string       `json:"token"`
+	RefreshToken string       `json:"refresh_token"`
 	User         UserResponse `json:"user"`
 }
 
@@ -30,7 +32,7 @@ type UserResponse struct {
 	Email       string   `json:"email"`
 	FullName    string   `json:"full_name"`
 	IsActive    bool     `json:"is_active"`
-	ForceChange  bool     `json:"force_change"`
+	ForceChange bool     `json:"force_change"`
 	Roles       []string `json:"roles"`
 	Permissions []string `json:"permissions"`
 }
@@ -68,27 +70,33 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	// Find user
+	// --- LOG TRACE START ---
+	fmt.Printf("\n--- 🛡️ DEBUG LOGIN ATTEMPT ---\n")
+	fmt.Printf("👤 Username: [%s]\n", req.Username)
+
 	user, err := getUserRepo().FindByUsername(req.Username)
 	if err != nil {
+		fmt.Printf("❌ User [%s] tidak ditemukan!\n", req.Username)
 		logAudit(c, 0, "login", "auth", nil, nil, "failed", "User not found")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
 		return
 	}
 
-	// Check if user is locked
+	// 1. CEK APAKAH AKUN TERKUNCI
 	if user.IsLocked {
+		fmt.Println("🚫 Login Ditolak: Akun dalam status TERKUNCI")
 		logAudit(c, user.ID, "login", "auth", nil, nil, "failed", "Account is locked")
 		c.JSON(http.StatusLocked, gin.H{"error": "Account is locked. Please contact administrator."})
 		return
 	}
 
-	// Check password
+	// 2. CEK PASSWORD
 	if !checkPassword(req.Password, user.PasswordHash) {
-		// Increment failed login count
+		fmt.Println("❌ Password Salah!")
 		user.FailedLogin++
 		if user.FailedLogin >= maxFailedLogin {
 			user.IsLocked = true
+			fmt.Println("⚠️ AKUN OTOMATIS TERKUNCI (Max login reached)")
 		}
 		getUserRepo().Update(user)
 
@@ -97,40 +105,41 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	// Reset failed login count on successful login
+	// 3. JIKA BERHASIL: Reset Failed Login & Update Last Login
+	fmt.Println("✅ LOGIN BERHASIL! Menyiapkan Data...")
 	if user.FailedLogin > 0 {
 		user.FailedLogin = 0
 		getUserRepo().Update(user)
 	}
 
-	// Update last login
 	now := time.Now()
 	user.LastLogin = &now
 	user.LastIP = c.ClientIP()
 	getUserRepo().Update(user)
 
-	// Generate token
-	token, err := generateToken(user.ID, user.Username)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
-		return
-	}
-
-	// Generate refresh token
-	refreshToken, err := generateRefreshToken(user.ID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate refresh token"})
-		return
-	}
-
-	// Get roles and permissions
+	// 4. AMBIL ROLES & PERMISSIONS (Dilakukan SEBELUM generate token)
 	roles := make([]string, len(user.Roles))
 	for i, role := range user.Roles {
 		roles[i] = role.Name
 	}
 
 	permissions := getUserPermissions(user.ID)
+	fmt.Printf("🎭 Roles: %v | Permissions Count: %d\n", roles, len(permissions))
 
+	// 5. GENERATE TOKENS (Sekarang variabel roles sudah tersedia)
+	token, err := generateToken(user.ID, user.Username, roles)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		return
+	}
+
+	refreshToken, err := generateRefreshToken(user.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate refresh token"})
+		return
+	}
+
+	fmt.Printf("--- 🛡️ DEBUG LOGIN END ---\n\n")
 	logAudit(c, user.ID, "login", "auth", nil, nil, "success", "")
 
 	c.JSON(http.StatusOK, LoginResponse{
@@ -150,28 +159,26 @@ func Login(c *gin.Context) {
 }
 
 func Logout(c *gin.Context) {
-	userID := c.GetUint("user_id")
+	userID := c.GetUint("current_user_id")
 	logAudit(c, userID, "logout", "auth", nil, nil, "success", "")
-
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
 }
 
 func RefreshToken(c *gin.Context) {
-	// For simplicity, just generate a new token
-	// In production, validate refresh token
 	c.JSON(http.StatusOK, gin.H{
 		"token": "new-mock-token",
 	})
 }
 
-func generateToken(userID uint, username string) (string, error) {
+// Generate token dengan menyertakan roles ke dalam claims
+func generateToken(userID uint, username string, roles []string) (string, error) {
 	claims := jwt.MapClaims{
 		"user_id":  userID,
 		"username": username,
+		"roles":    roles, // <--- Data roles masuk ke payload JWT
 		"exp":      time.Now().Add(24 * time.Hour).Unix(),
 		"iat":      time.Now().Unix(),
 	}
-
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(jwtSecret)
 }
@@ -183,14 +190,8 @@ func generateRefreshToken(userID uint) (string, error) {
 		"iat":     time.Now().Unix(),
 		"type":    "refresh",
 	}
-
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(jwtSecret)
-}
-
-func hashPassword(password string) (string, error) {
-	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 14)
-	return string(bytes), err
 }
 
 func checkPassword(password, hash string) bool {
@@ -199,30 +200,20 @@ func checkPassword(password, hash string) bool {
 }
 
 func getUserPermissions(userID uint) []string {
-	// TODO: Implement permission retrieval from database
-	// For now, return all permissions for admin
-	return []string{
-		"dashboard.view",
-		"user_mgmt.view",
-		"user_mgmt.create",
-		"user_mgmt.edit",
-		"user_mgmt.delete",
-		"member_mgmt.view",
-		"member_mgmt.create",
-		"member_mgmt.edit",
-		"member_mgmt.delete",
-		"saving_mgmt.view",
-		"saving_mgmt.create",
-		"saving_mgmt.edit",
-		"saving_mgmt.delete",
-		"loan_mgmt.view",
-		"loan_mgmt.create",
-		"loan_mgmt.edit",
-		"loan_mgmt.delete",
-		"loan_mgmt.approve",
-		"role_mgmt.view",
-		"audit.view",
+	var permissions []string
+	// Menggunakan pluck untuk mengambil kolom code dari tabel permissions
+	err := config.GetDB().Table("permissions p").
+		Select("DISTINCT p.code").
+		Joins("JOIN role_permissions rp ON p.id = rp.permission_id").
+		Joins("JOIN user_roles ur ON rp.role_id = ur.role_id").
+		Where("ur.user_id = ? AND rp.is_allowed = ?", userID, true).
+		Pluck("code", &permissions).Error
+
+	if err != nil {
+		fmt.Printf("Error fetching permissions for user %d: %v\n", userID, err)
+		return []string{}
 	}
+	return permissions
 }
 
 func logAudit(c *gin.Context, userID uint, action, module string, oldData, newData interface{}, status, errorMsg string) {
@@ -233,7 +224,7 @@ func logAudit(c *gin.Context, userID uint, action, module string, oldData, newDa
 
 	audit := &models.AuditLog{
 		UserID:    uid,
-		Username:  c.GetString("username"),
+		Username:  c.GetString("current_user_name"),
 		Action:    action,
 		Module:    module,
 		IPAddress: c.ClientIP(),

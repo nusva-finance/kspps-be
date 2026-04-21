@@ -2,7 +2,6 @@ package models
 
 import (
 	"time"
-
 	"gorm.io/gorm"
 )
 
@@ -46,6 +45,7 @@ type Member struct {
 	// Bank Information
 	BankAccountNo string `json:"bank_account_no"`
 	BankName      string `json:"bank_name"`
+	QardhassanPlafon float64 `gorm:"column:qardhassanplafon;default:0" json:"qardhassanplafon"`
 
 	SavingAccounts []SavingAccount `gorm:"foreignKey:MemberID" json:"saving_accounts,omitempty"`
 }

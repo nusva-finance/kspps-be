@@ -33,6 +33,7 @@ func (r *PembayaranPembiayaanRepository) FindByID(id int) (*models.PembayaranPem
 }
 
 // ListByPinjamanID - Mengambil daftar pembayaran berdasarkan ID Pinjaman
+// ListByPinjamanID - Mengambil daftar pembayaran berdasarkan ID Pinjaman
 func (r *PembayaranPembiayaanRepository) ListByPinjamanID(idPinjaman int) ([]models.PembayaranPembiayaanWithDetails, error) {
 	var result []models.PembayaranPembiayaanWithDetails
 
@@ -41,10 +42,25 @@ func (r *PembayaranPembiayaanRepository) ListByPinjamanID(idPinjaman int) ([]mod
 			pp.*,
 			m.full_name as nama_anggota,
 			m.member_no,
-			pem.idmember
+			pem.idmember,
+			COALESCE(rt.idnusvarekening, 0) as idnusvarekening,
+			COALESCE(nr.namarekening, '') as namarekening,
+			COALESCE(nr.norekening, '') as norekening
 		FROM pembayaran_pembiayaan pp
 		LEFT JOIN pembiayaan pem ON pp.idpinjaman = pem.idpinjaman
 		LEFT JOIN members m ON pem.idmember = m.id
+		-- Mengambil TOP 1 (LIMIT 1) transaksi rekening terbaru (Insert atau Update)
+		LEFT JOIN LATERAL (
+			SELECT idnusvarekening 
+			FROM rekening_transaction 
+			WHERE tabletransaction = 'pembayaran_pembiayaan' 
+			  AND idtabletransaction = pp.idpembayaranpembiayaan 
+			  AND UPPER(transactiontype) IN ('INSERT', 'UPDATE')
+			ORDER BY created_at DESC 
+			LIMIT 1
+		) rt ON true
+		-- Relasi ke tabel master rekening
+		LEFT JOIN nusva_rekening nr ON rt.idnusvarekening = nr.idnusvarekening
 		WHERE pp.idpinjaman = ?
 		ORDER BY pp.angsuranke ASC, pp.tglpembayaran ASC
 	`

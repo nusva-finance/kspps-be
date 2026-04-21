@@ -323,8 +323,15 @@ func UpdatePembayaran(c *gin.Context) {
 	})
 }
 
+
 // DeletePembayaran deletes a payment record
 func DeletePembayaran(c *gin.Context) {
+	// Ambil operator untuk audit
+	operatorName := c.GetString("current_user_name")
+	if operatorName == "" {
+		operatorName = "system"
+	}
+
 	idParam := c.Param("id")
 	id, err := strconv.Atoi(idParam)
 	if err != nil {
@@ -333,7 +340,26 @@ func DeletePembayaran(c *gin.Context) {
 		return
 	}
 
+	fmt.Println("🗑️ Deleting pembayaran ID:", id)
+
 	repo := repositories.NewPembayaranPembiayaanRepository()
+
+	// 1. Ambil data pembayaran SEBELUM dihapus untuk mendapatkan Nominal dan data aslinya
+	pembayaran, err := repo.FindByID(id)
+	if err != nil {
+		fmt.Println("❌ Pembayaran not found:", id)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Pembayaran not found"})
+		return
+	}
+
+	// 2. Cari transaksi rekening awal untuk mendapatkan IDNusvaRekening
+	oldTransaction, err := repo.FindRekeningTransactionByReference("pembayaran_pembiayaan", uint(id))
+	var idNusvaRekening uint = 0
+	if err == nil && oldTransaction != nil {
+		idNusvaRekening = oldTransaction.IDNusvaRekening
+	}
+
+	// 3. Hapus pembayaran dari tabel pembayaran_pembiayaan
 	if err := repo.Delete(id); err != nil {
 		fmt.Println("❌ Error deleting pembayaran:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete pembayaran"})
@@ -341,6 +367,29 @@ func DeletePembayaran(c *gin.Context) {
 	}
 
 	fmt.Println("✅ Pembayaran deleted successfully:", id)
+
+	// 4. Buat record rekening_transaction dengan tipe "Delete"
+	if idNusvaRekening > 0 {
+		deleteTransaction := &models.RekeningTransaction{
+			TransactionType:    "Delete",
+			IDNusvaRekening:    idNusvaRekening,
+			TableTransaction:   "pembayaran_pembiayaan",
+			IDTableTransaction: uint(id),
+			TanggalTransaksi:   time.Now(),
+			// Nominal kita buat negatif (-) untuk mengurangi/membalikkan uang yang sebelumnya masuk (Insert)
+			NominalTransaksi:   -pembayaran.NominalPembayaran,
+			CreatedBy:          operatorName,
+			UpdatedBy:          operatorName,
+			CreatedAt:          time.Now(),
+			UpdatedAt:          time.Now(),
+		}
+
+		if err := repo.CreateRekeningTransaction(deleteTransaction); err != nil {
+			fmt.Println("❌ Error creating DELETE rekening_transaction:", err)
+		} else {
+			fmt.Println("✅ DELETE rekening transaction created successfully")
+		}
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Pembayaran deleted successfully",
